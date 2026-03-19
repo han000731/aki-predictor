@@ -7,6 +7,7 @@ import shap
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import numpy as np
+import io
 
 # ========== 页面配置 ==========
 st.set_page_config(page_title="神经重症AKI风险预测器", page_icon="🧠")
@@ -45,7 +46,6 @@ explainer = shap.TreeExplainer(xgb_model)
 
 # ========== 字体检测 ==========
 def check_chinese_font():
-    """检测系统中是否有中文字体，返回是否可用"""
     chinese_fonts = [
         'WenQuanYi Zen Hei',
         'Noto Sans CJK SC',
@@ -65,8 +65,7 @@ def check_chinese_font():
 chinese_available = check_chinese_font()
 if not chinese_available:
     st.warning("⚠️ 当前环境缺少中文字体，SHAP 力图将使用英文标签显示，不影响预测结果。")
-    # 使用英文特征名（即 feature_names 本身）
-    label_list = feature_names
+    label_list = feature_names  # 使用原始英文名
 else:
     label_list = [FEATURE_NAME_CN.get(name, name) for name in feature_names]
 
@@ -135,24 +134,28 @@ if submitted:
         base_value=explainer.expected_value,
         shap_values=shap_values[0],
         features=input_df.iloc[0].values,
-        feature_names=label_list,            # 根据字体可用性选择标签
+        feature_names=label_list,
         matplotlib=True,
         show=False
     )
 
-    # 强制重新设置图形尺寸（防止被覆盖）
+    # 强制设置图形尺寸
     fig = plt.gcf()
     fig.set_size_inches(18, 6)
 
-    # 调整 x 轴标签旋转与对齐
+    # 调整 x 轴标签旋转
     ax = plt.gca()
     plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
 
-    # 紧凑布局，但保留底部空间给标签
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # 底部留出 5% 空间
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # 底部留出空间
 
-    st.pyplot(fig, use_container_width=False)  # 禁用自动缩放，保持原始尺寸
-    plt.close()
+    # 将图形保存到内存缓冲区，然后用 st.image 显示（更稳定）
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    st.image(buf, use_column_width=True)  # 自动适应列宽
+
+    plt.close(fig)
 
     st.caption("注：本预测结果基于回顾性研究模型，仅供参考，不能替代临床医生判断。")
     if not chinese_available:
