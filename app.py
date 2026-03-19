@@ -100,9 +100,9 @@ def draw_force_plot(
     figsize=None,
     text_rotation=30,
     min_perc=0.02,
-    offset_factor=0.04,
+    offset_factor=0.08,          # 增加偏移系数，延长连接线
     dpi=150,
-    label_fontsize=10,
+    label_fontsize=9,
 ):
     """
     基于上传的 SHAP 绘图逻辑，绘制单个样本的力图。
@@ -165,9 +165,9 @@ def draw_force_plot(
         draw_labels(fig, ax, out_value, pos_features, "positive", offset_text, total_effect,
                     min_perc=min_perc, text_rotation=text_rotation, label_fontsize=label_fontsize)
 
-    # 绘制基准值和输出值
+    # 绘制基准值和输出值（输出值去掉白色背景框）
     draw_base_element(base_value, ax)
-    draw_output_element(out_value, ax, data["outNames"][0])
+    draw_output_element(out_value, ax, data["outNames"][0])  # 已修改去框
 
     # 绘制 higher/lower 指示
     draw_higher_lower_element(out_value, offset_text, ax)
@@ -175,7 +175,7 @@ def draw_force_plot(
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
     return fig
 
-# ========== 以下为上传代码中的辅助函数（稍作修改以支持参数化） ==========
+# ========== 以下为上传代码中的辅助函数 ==========
 def format_data(data):
     """格式化数据，返回正负特征数组和总贡献范围。"""
     neg_features = []
@@ -360,12 +360,12 @@ def draw_labels(
     im.set_clip_path(patch)
 
 def draw_output_element(out_value, ax, out_name):
-    """绘制输出值标记。"""
+    """绘制输出值标记（已移除白色背景框）。"""
     line = lines.Line2D([out_value, out_value], [0, 0.24], lw=2.0, color="#F2F2F2")
     line.set_clip_on(False)
     ax.add_line(line)
-    ax.text(out_value, 0.25, f"{out_value:.2f}", fontsize=12, weight="bold", ha="center",
-            bbox=dict(facecolor="white", edgecolor="white"))
+    # 去掉 bbox 参数，不再显示白色背景框
+    ax.text(out_value, 0.25, f"{out_value:.2f}", fontsize=12, weight="bold", ha="center")
     ax.text(out_value, 0.33, out_name, fontsize=10, alpha=0.5, ha="center")
 
 def draw_base_element(base_value, ax):
@@ -417,7 +417,7 @@ if submitted:
     st.subheader("🔍 影响风险的关键因素（SHAP 力图）")
     st.markdown("下图展示了每个特征对当前患者 AKI 风险的贡献：**红色条表示推高风险**，**蓝色条表示降低风险**。")
 
-    # 绘制力图
+    # 绘制力图（已调整 offset_factor=0.08 延长连接线，并移除输出值方框）
     fig = draw_force_plot(
         base_value=explainer.expected_value,
         shap_values=shap_values,
@@ -425,8 +425,8 @@ if submitted:
         feature_names=label_list,
         text_rotation=30,
         min_perc=0.02,
-        offset_factor=0.04,
-        label_fontsize=9,          # 标签字体缩小，避免拥挤
+        offset_factor=0.08,       # 增大偏移，连接线更长
+        label_fontsize=9,
         dpi=150,
     )
 
