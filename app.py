@@ -8,36 +8,12 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import numpy as np
 
-# ========== 设置中文字体 ==========
-def set_chinese_font():
-    chinese_fonts = [
-        'WenQuanYi Zen Hei',       # Ubuntu 默认文泉驿正黑
-        'Noto Sans CJK SC',         # Google Noto 简体中文
-        'SimHei',                    # Windows 黑体
-        'Microsoft YaHei',           # Windows 微软雅黑
-        'DejaVu Sans'                # 最终回退字体（可能不支持中文）
-    ]
-    for font in chinese_fonts:
-        try:
-            # 检查字体是否可用
-            if any(f.name == font for f in fm.fontManager.ttflist):
-                plt.rcParams['font.family'] = font
-                break
-        except:
-            continue
-    else:
-        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
-        st.warning("⚠️ 未找到合适的中文字体，SHAP 力图中的中文可能显示为方框，但不影响预测结果。")
-    plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
-
-set_chinese_font()
-
 # ========== 页面配置 ==========
 st.set_page_config(page_title="神经重症AKI风险预测器", page_icon="🧠")
 st.title("🧠 神经重症急性肾损伤（AKI）风险预测计算器")
 st.markdown("基于 **10项核心临床特征** 与 **集成机器学习模型**，实时预测AKI发生概率，并展示影响风险的关键因素。")
 
-# ========== 特征中文名称映射（词典） ==========
+# ========== 特征名称映射 ==========
 FEATURE_NAME_CN = {
     'Age': '年龄 (岁)',
     'APACHEII': 'APACHE II 评分',
@@ -66,6 +42,33 @@ if not os.path.exists('models/model_ens.pkl'):
 
 model_ens, scaler, feature_names, xgb_model = load_models()
 explainer = shap.TreeExplainer(xgb_model)
+
+# ========== 字体检测 ==========
+def check_chinese_font():
+    """检测系统中是否有中文字体，返回是否可用"""
+    chinese_fonts = [
+        'WenQuanYi Zen Hei',
+        'Noto Sans CJK SC',
+        'SimHei',
+        'Microsoft YaHei'
+    ]
+    for font in chinese_fonts:
+        try:
+            if any(f.name == font for f in fm.fontManager.ttflist):
+                plt.rcParams['font.family'] = font
+                return True
+        except:
+            continue
+    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    return False
+
+chinese_available = check_chinese_font()
+if not chinese_available:
+    st.warning("⚠️ 当前环境缺少中文字体，SHAP 力图将使用英文标签显示，不影响预测结果。")
+    # 使用英文特征名（即 feature_names 本身）
+    label_list = feature_names
+else:
+    label_list = [FEATURE_NAME_CN.get(name, name) for name in feature_names]
 
 # ========== 输入表单 ==========
 with st.form("prediction_form"):
@@ -125,27 +128,32 @@ if submitted:
     st.markdown("下图展示了每个特征对当前患者 AKI 风险的贡献：**红色条表示推高风险**，**蓝色条表示降低风险**。")
 
     shap_values = explainer.shap_values(input_scaled)
-    cn_labels = [FEATURE_NAME_CN.get(name, name) for name in feature_names]
 
-    # 设置大尺寸、高分辨率图形
-    plt.figure(figsize=(16, 5), dpi=150)
+    # 创建大尺寸、高分辨率图形
+    plt.figure(figsize=(18, 6), dpi=150)
     shap.force_plot(
         base_value=explainer.expected_value,
         shap_values=shap_values[0],
         features=input_df.iloc[0].values,
-        feature_names=cn_labels,
+        feature_names=label_list,            # 根据字体可用性选择标签
         matplotlib=True,
         show=False
     )
 
-    # 调整 x 轴标签旋转，避免拥挤
-    ax = plt.gca()
-    for label in ax.get_xticklabels():
-        label.set_rotation(30)
-        label.set_ha('right')
+    # 强制重新设置图形尺寸（防止被覆盖）
+    fig = plt.gcf()
+    fig.set_size_inches(18, 6)
 
-    plt.tight_layout()
-    st.pyplot(plt.gcf())
+    # 调整 x 轴标签旋转与对齐
+    ax = plt.gca()
+    plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+
+    # 紧凑布局，但保留底部空间给标签
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # 底部留出 5% 空间
+
+    st.pyplot(fig, use_container_width=False)  # 禁用自动缩放，保持原始尺寸
     plt.close()
 
     st.caption("注：本预测结果基于回顾性研究模型，仅供参考，不能替代临床医生判断。")
+    if not chinese_available:
+        st.caption("（当前使用英文标签，因云端环境缺少中文字体。如需中文，可考虑部署至支持中文的环境。）")
