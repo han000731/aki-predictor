@@ -6,6 +6,7 @@ import os
 import shap
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+import matplotlib.ticker as ticker  # 保留以备将来使用
 import numpy as np
 import io
 
@@ -128,7 +129,7 @@ if submitted:
 
     shap_values = explainer.shap_values(input_scaled)
 
-    # 创建大尺寸、高分辨率图形
+    # 创建大尺寸、高分辨率图形，并设置 contribution_threshold 过滤小贡献特征
     plt.figure(figsize=(18, 6), dpi=150)
     shap.force_plot(
         base_value=explainer.expected_value,
@@ -136,24 +137,39 @@ if submitted:
         features=input_df.iloc[0].values,
         feature_names=label_list,
         matplotlib=True,
-        show=False
+        show=False,
+        contribution_threshold=0.02  # 只显示贡献度绝对值 ≥ 2% 的特征
     )
 
-    # 强制设置图形尺寸
+    # 获取当前坐标轴
+    ax = plt.gca()
+
+    # 格式化 x 轴标签（特征值），保留两位小数
+    for label in ax.get_xticklabels():
+        try:
+            text = label.get_text()
+            if '=' in text:
+                name, value = text.split('=')
+                val_float = float(value)
+                label.set_text(f"{name}={val_float:.2f}")
+        except:
+            pass
+
+    # 强制设置图形尺寸（防止被覆盖）
     fig = plt.gcf()
     fig.set_size_inches(18, 6)
 
     # 调整 x 轴标签旋转
-    ax = plt.gca()
     plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
 
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # 底部留出空间
+    # 紧凑布局，底部留出空间
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
 
-    # 将图形保存到内存缓冲区，然后用 st.image 显示（更稳定）
+    # 将图形保存到内存缓冲区，然后用 st.image 显示
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
     buf.seek(0)
-    st.image(buf, use_column_width=True)  # 自动适应列宽
+    st.image(buf, use_column_width=True)
 
     plt.close(fig)
 
