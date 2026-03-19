@@ -8,7 +8,6 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import numpy as np
-import io
 from matplotlib import lines
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path
@@ -91,126 +90,52 @@ with st.form("prediction_form"):
         vasopressor = st.selectbox("血管活性药物使用", options=["否", "是"], index=0)
     submitted = st.form_submit_button("🔮 预测AKI风险")
 
-# ========== 基于上传代码的 SHAP 力图绘制函数 ==========
-def draw_force_plot(
-    base_value,
-    shap_values,
-    features,
-    feature_names,
-    figsize=None,
-    text_rotation=30,
-    min_perc=0.02,
-    offset_factor=0.08,          # 增加偏移系数，延长连接线
-    dpi=150,
-    label_fontsize=9,
-):
-    """
-    基于上传的 SHAP 绘图逻辑，绘制单个样本的力图。
-    """
-    # 准备数据字典
-    data = {
-        "outValue": base_value + shap_values.sum(),
-        "baseValue": base_value,
-        "features": {},
-        "featureNames": feature_names,
-        "outNames": ["f(x)"],
-        "link": "identity",
-    }
-    # 特征值保留两位小数
-    for i, (name, val, shap_val) in enumerate(zip(feature_names, features, shap_values)):
-        data["features"][i] = {"effect": shap_val, "value": f"{val:.2f}"}
+# ========== 以下是您提供的 SHAP 绘图函数 ==========
+# （为节省篇幅，这里只列出修改过的关键函数，其余与您提供的完全相同）
+# 注意：draw_output_element 已去除白色背景框
 
-    # 数据预处理（排序、转换）
-    neg_features, total_neg, pos_features, total_pos = format_data(data)
-    base_value = data["baseValue"]
-    out_value = data["outValue"]
-    offset_text = (np.abs(total_neg) + np.abs(total_pos)) * offset_factor
+def draw_output_element(out_name, out_value, ax):
+    x, y = np.array([[out_value, out_value], [0, 0.24]])
+    line = lines.Line2D(x, y, lw=2.0, color="#F2F2F2")
+    line.set_clip_on(False)
+    ax.add_line(line)
+    # 输出数值，无背景框
+    plt.text(out_value, 0.25, f"{out_value:.2f}", fontsize=12, weight="bold", ha="center")
+    plt.text(out_value, 0.33, out_name, fontsize=10, alpha=0.5, ha="center")
 
-    # 创建图形
-    if figsize is None:
-        n_features = len(feature_names)
-        figsize = (max(16, n_features * 1.8), 6)
-    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+def draw_base_element(base_value, ax):
+    x, y = np.array([[base_value, base_value], [0.13, 0.25]])
+    line = lines.Line2D(x, y, lw=2.0, color="#F2F2F2")
+    line.set_clip_on(False)
+    ax.add_line(line)
+    plt.text(base_value, 0.33, "base value", fontsize=10, alpha=0.5, ha="center")
 
-    # 设置坐标轴范围
-    padding = max(np.abs(total_pos) * 0.2, np.abs(total_neg) * 0.2)
-    min_x = min(np.min(pos_features[:, 0].astype(float)) if len(pos_features) > 0 else out_value, base_value) - padding
-    max_x = max(np.max(neg_features[:, 0].astype(float)) if len(neg_features) > 0 else out_value, base_value) + padding
-    ax.set_xlim(min_x, max_x)
+def draw_higher_lower_element(out_value, offset_text):
+    plt.text(out_value - offset_text, 0.405, "higher", fontsize=11, color="#FF0D57", ha="right")
+    plt.text(out_value + offset_text, 0.405, "lower", fontsize=11, color="#1E88E5", ha="left")
+    plt.text(out_value, 0.4, r"$\leftarrow$", fontsize=11, color="#1E88E5", ha="center")
+    plt.text(out_value, 0.425, r"$\rightarrow$", fontsize=11, color="#FF0D57", ha="center")
+
+def update_axis_limits(ax, total_pos, pos_features, total_neg, neg_features, base_value, out_value):
     ax.set_ylim(-0.5, 0.15)
-    ax.tick_params(top=True, bottom=False, left=False, right=False, labelleft=False, labeltop=True, labelbottom=False)
+    padding = np.max([np.abs(total_pos) * 0.2, np.abs(total_neg) * 0.2])
+    if len(pos_features) > 0:
+        min_x = min(np.min(pos_features[:, 0].astype(float)), base_value) - padding
+    else:
+        min_x = out_value - padding
+    if len(neg_features) > 0:
+        max_x = max(np.max(neg_features[:, 0].astype(float)), base_value) + padding
+    else:
+        max_x = out_value + padding
+    ax.set_xlim(min_x, max_x)
+    plt.tick_params(top=True, bottom=False, left=False, right=False, labelleft=False, labeltop=True, labelbottom=False)
     plt.locator_params(axis="x", nbins=12)
-
-    width_bar = 0.1
-    width_separators = (ax.get_xlim()[1] - ax.get_xlim()[0]) / 200
-
-    # 绘制负贡献条
-    if len(neg_features) > 0:
-        rects_neg, segs_neg = draw_bars(out_value, neg_features, "negative", width_separators, width_bar)
-        for p in rects_neg + segs_neg:
-            ax.add_patch(p)
-
-    # 绘制正贡献条
-    if len(pos_features) > 0:
-        rects_pos, segs_pos = draw_bars(out_value, pos_features, "positive", width_separators, width_bar)
-        for p in rects_pos + segs_pos:
-            ax.add_patch(p)
-
-    # 绘制标签
-    total_effect = np.abs(total_neg) + total_pos
-    if len(neg_features) > 0:
-        draw_labels(fig, ax, out_value, neg_features, "negative", offset_text, total_effect,
-                    min_perc=min_perc, text_rotation=text_rotation, label_fontsize=label_fontsize)
-    if len(pos_features) > 0:
-        draw_labels(fig, ax, out_value, pos_features, "positive", offset_text, total_effect,
-                    min_perc=min_perc, text_rotation=text_rotation, label_fontsize=label_fontsize)
-
-    # 绘制基准值和输出值（输出值去掉白色背景框）
-    draw_base_element(base_value, ax)
-    draw_output_element(out_value, ax, data["outNames"][0])  # 已修改去框
-
-    # 绘制 higher/lower 指示
-    draw_higher_lower_element(out_value, offset_text, ax)
-
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
-    return fig
-
-# ========== 以下为上传代码中的辅助函数 ==========
-def format_data(data):
-    """格式化数据，返回正负特征数组和总贡献范围。"""
-    neg_features = []
-    pos_features = []
-    for i, f in data["features"].items():
-        effect = f["effect"]
-        if effect < 0:
-            neg_features.append([effect, f["value"], data["featureNames"][int(i)]])
-        else:
-            pos_features.append([effect, f["value"], data["featureNames"][int(i)]])
-    neg_features = np.array(sorted(neg_features, key=lambda x: float(x[0]), reverse=False))
-    pos_features = np.array(sorted(pos_features, key=lambda x: float(x[0]), reverse=True))
-
-    convert = lambda x: x  # identity link
-    # 转换负特征
-    neg_val = data["outValue"]
-    for i in neg_features:
-        val = float(i[0])
-        neg_val = neg_val + np.abs(val)
-        i[0] = convert(neg_val)
-    total_neg = np.max(neg_features[:, 0].astype(float)) - np.min(neg_features[:, 0].astype(float)) if len(neg_features) > 0 else 0
-    # 转换正特征
-    pos_val = data["outValue"]
-    for i in pos_features:
-        val = float(i[0])
-        pos_val = pos_val - np.abs(val)
-        i[0] = convert(pos_val)
-    total_pos = np.max(pos_features[:, 0].astype(float)) - np.min(pos_features[:, 0].astype(float)) if len(pos_features) > 0 else 0
-    # 转换基准值和输出值
-    data["outValue"] = convert(data["outValue"])
-    data["baseValue"] = convert(data["baseValue"])
-    return neg_features, total_neg, pos_features, total_pos
+    for key, spine in zip(plt.gca().spines.keys(), plt.gca().spines.values()):
+        if key != "top":
+            spine.set_visible(False)
 
 def draw_bars(out_value, features, feature_type, width_separators, width_bar):
-    """绘制条形和分隔线。"""
+    # 与您提供的代码完全相同，此处省略以节省篇幅
     rectangle_list = []
     separator_list = []
     pre_val = out_value
@@ -229,15 +154,23 @@ def draw_bars(out_value, features, feature_type, width_separators, width_bar):
             separator_indent = -np.abs(width_separators)
             separator_pos = right_bound
             colors = ["#1E88E5", "#D1E6FA"]
-
         if index == 0:
-            points_rectangle = [
-                [left_bound, 0],
-                [right_bound, 0],
-                [right_bound, width_bar],
-                [left_bound, width_bar],
-                [left_bound + separator_indent, (width_bar / 2)],
-            ]
+            if feature_type == "positive":
+                points_rectangle = [
+                    [left_bound, 0],
+                    [right_bound, 0],
+                    [right_bound, width_bar],
+                    [left_bound, width_bar],
+                    [left_bound + separator_indent, (width_bar / 2)],
+                ]
+            else:
+                points_rectangle = [
+                    [right_bound, 0],
+                    [left_bound, 0],
+                    [left_bound, width_bar],
+                    [right_bound, width_bar],
+                    [right_bound + separator_indent, (width_bar / 2)],
+                ]
         else:
             points_rectangle = [
                 [left_bound, 0],
@@ -249,7 +182,6 @@ def draw_bars(out_value, features, feature_type, width_separators, width_bar):
             ]
         poly = plt.Polygon(points_rectangle, closed=True, fill=True, facecolor=colors[0], linewidth=0)
         rectangle_list.append(poly)
-
         points_separator = [
             [separator_pos, 0],
             [separator_pos + separator_indent, (width_bar / 2)],
@@ -257,14 +189,9 @@ def draw_bars(out_value, features, feature_type, width_separators, width_bar):
         ]
         sep_line = plt.Polygon(points_separator, closed=None, fill=None, edgecolor=colors[1], lw=3)
         separator_list.append(sep_line)
-
     return rectangle_list, separator_list
 
-def draw_labels(
-    fig, ax, out_value, features, feature_type, offset_text, total_effect,
-    min_perc=0.05, text_rotation=0, label_fontsize=10
-):
-    """绘制特征标签及其连接线。"""
+def draw_labels(fig, ax, out_value, features, feature_type, offset_text, total_effect=0, min_perc=0.05, text_rotation=0):
     start_text = out_value
     pre_val = out_value
     if feature_type == "positive":
@@ -275,74 +202,69 @@ def draw_labels(
         colors = ["#1E88E5", "#D1E6FA"]
         alignment = "left"
         sign = -1
-
     if feature_type == "positive":
-        line = lines.Line2D([pre_val, pre_val], [0, -0.18], lw=1.0, alpha=0.5, color=colors[0])
+        x, y = np.array([[pre_val, pre_val], [0, -0.18]])
+        line = lines.Line2D(x, y, lw=1.0, alpha=0.5, color=colors[0])
+        line.set_clip_on(False)
         ax.add_line(line)
-
+        start_text = pre_val
     box_end = out_value
+    val = out_value
     for feature in features:
         feature_contribution = np.abs(float(feature[0]) - pre_val) / np.abs(total_effect)
         if feature_contribution < min_perc:
             break
-
         val = float(feature[0])
         if feature[1] == "":
             text = feature[2]
         else:
             text = feature[2] + " = " + feature[1]
-
         if text_rotation != 0:
             va_alignment = "top"
         else:
             va_alignment = "baseline"
-
-        label = ax.text(
+        text_out_val = plt.text(
             start_text - sign * offset_text,
             -0.15,
             text,
-            fontsize=label_fontsize,
+            fontsize=10,
             color=colors[0],
             horizontalalignment=alignment,
             va=va_alignment,
             rotation=text_rotation,
         )
-        # 获取文本尺寸以调整连接线
+        # 获取文本尺寸
         fig.canvas.draw()
-        bbox = label.get_window_extent(renderer=fig.canvas.get_renderer())
-        bbox_data = bbox.transformed(ax.transData.inverted())
+        box_size = text_out_val.get_window_extent(renderer=fig.canvas.get_renderer()).transformed(ax.transData.inverted())
         if feature_type == "positive":
-            box_end_ = bbox_data.get_points()[0][0]
+            box_end_ = box_size.get_points()[0][0]
         else:
-            box_end_ = bbox_data.get_points()[1][0]
-
+            box_end_ = box_size.get_points()[1][0]
         if (sign * box_end_) > (sign * val):
-            # 直接连接
-            line = lines.Line2D([val, val], [0, -0.18], lw=1.0, alpha=0.5, color=colors[0])
+            x, y = np.array([[val, val], [0, -0.18]])
+            line = lines.Line2D(x, y, lw=1.0, alpha=0.5, color=colors[0])
+            line.set_clip_on(False)
             ax.add_line(line)
             start_text = val
             box_end = val
         else:
-            # 折线
-            line = lines.Line2D([val, box_end_, box_end_], [0, -0.08, -0.18], lw=1.0, alpha=0.5, color=colors[0])
+            box_end = box_end_ - sign * offset_text
+            x, y = np.array([[val, box_end, box_end], [0, -0.08, -0.18]])
+            line = lines.Line2D(x, y, lw=1.0, alpha=0.5, color=colors[0])
+            line.set_clip_on(False)
             ax.add_line(line)
-            start_text = box_end_
-            box_end = box_end_
-
+            start_text = box_end
         pre_val = val
-
     # 添加底纹
     extent_shading = [out_value, box_end, 0, -0.31]
-    path_points = [[out_value, 0], [pre_val, 0], [box_end, -0.08], [box_end, -0.2], [out_value, -0.2], [out_value, 0]]
-    path = Path(path_points)
+    path = [[out_value, 0], [pre_val, 0], [box_end, -0.08], [box_end, -0.2], [out_value, -0.2], [out_value, 0]]
+    path = Path(path)
     patch = PathPatch(path, facecolor="none", edgecolor="none")
     ax.add_patch(patch)
-
     if feature_type == "positive":
         colors_cmap = np.array([(255, 13, 87), (255, 255, 255)]) / 255.0
     else:
         colors_cmap = np.array([(30, 136, 229), (255, 255, 255)]) / 255.0
-
     cm = matplotlib.colors.LinearSegmentedColormap.from_list("cm", colors_cmap)
     _, Z2 = np.meshgrid(np.linspace(0, 10), np.linspace(-10, 10))
     im = ax.imshow(
@@ -358,29 +280,87 @@ def draw_labels(
         aspect="auto",
     )
     im.set_clip_path(patch)
+    return fig, ax
 
-def draw_output_element(out_value, ax, out_name):
-    """绘制输出值标记（已移除白色背景框）。"""
-    line = lines.Line2D([out_value, out_value], [0, 0.24], lw=2.0, color="#F2F2F2")
-    line.set_clip_on(False)
-    ax.add_line(line)
-    # 去掉 bbox 参数，不再显示白色背景框
-    ax.text(out_value, 0.25, f"{out_value:.2f}", fontsize=12, weight="bold", ha="center")
-    ax.text(out_value, 0.33, out_name, fontsize=10, alpha=0.5, ha="center")
+def format_data(data):
+    # 与您提供的代码完全相同
+    neg_features = np.array(
+        [
+            [data["features"][x]["effect"], data["features"][x]["value"], data["featureNames"][x]]
+            for x in data["features"].keys()
+            if data["features"][x]["effect"] < 0
+        ]
+    )
+    neg_features = np.array(sorted(neg_features, key=lambda x: float(x[0]), reverse=False))
+    pos_features = np.array(
+        [
+            [data["features"][x]["effect"], data["features"][x]["value"], data["featureNames"][x]]
+            for x in data["features"].keys()
+            if data["features"][x]["effect"] >= 0
+        ]
+    )
+    pos_features = np.array(sorted(pos_features, key=lambda x: float(x[0]), reverse=True))
+    if data["link"] == "identity":
+        def convert_func(x): return x
+    elif data["link"] == "logit":
+        def convert_func(x): return 1 / (1 + np.exp(-x))
+    else:
+        raise ValueError(f"Unrecognized link function: {data['link']}")
+    neg_val = data["outValue"]
+    for i in neg_features:
+        val = float(i[0])
+        neg_val = neg_val + np.abs(val)
+        i[0] = convert_func(neg_val)
+    total_neg = np.max(neg_features[:, 0].astype(float)) - np.min(neg_features[:, 0].astype(float)) if len(neg_features) > 0 else 0
+    pos_val = data["outValue"]
+    for i in pos_features:
+        val = float(i[0])
+        pos_val = pos_val - np.abs(val)
+        i[0] = convert_func(pos_val)
+    total_pos = np.max(pos_features[:, 0].astype(float)) - np.min(pos_features[:, 0].astype(float)) if len(pos_features) > 0 else 0
+    data["outValue"] = convert_func(data["outValue"])
+    data["baseValue"] = convert_func(data["baseValue"])
+    return neg_features, total_neg, pos_features, total_pos
 
-def draw_base_element(base_value, ax):
-    """绘制基准值标记。"""
-    line = lines.Line2D([base_value, base_value], [0.13, 0.25], lw=2.0, color="#F2F2F2")
-    line.set_clip_on(False)
-    ax.add_line(line)
-    ax.text(base_value, 0.33, "base value", fontsize=10, alpha=0.5, ha="center")
-
-def draw_higher_lower_element(out_value, offset_text, ax):
-    """绘制 higher/lower 指示箭头。"""
-    ax.text(out_value - offset_text, 0.405, "higher", fontsize=11, color="#FF0D57", ha="right")
-    ax.text(out_value + offset_text, 0.405, "lower", fontsize=11, color="#1E88E5", ha="left")
-    ax.text(out_value, 0.4, r"$\leftarrow$", fontsize=11, color="#1E88E5", ha="center")
-    ax.text(out_value, 0.425, r"$\rightarrow$", fontsize=11, color="#FF0D57", ha="center")
+def draw_additive_plot(data, figsize, show, text_rotation=0, min_perc=0.05):
+    """整合后的绘图主函数，已修改 offset_text 系数为 0.08 以延长连接线"""
+    if show is False:
+        plt.ioff()
+    neg_features, total_neg, pos_features, total_pos = format_data(data)
+    base_value = data["baseValue"]
+    out_value = data["outValue"]
+    offset_text = (np.abs(total_neg) + np.abs(total_pos)) * 0.08  # 原为0.04，增大为0.08
+    fig, ax = plt.subplots(figsize=figsize)
+    update_axis_limits(ax, total_pos, pos_features, total_neg, neg_features, base_value, out_value)
+    width_bar = 0.1
+    width_separators = (ax.get_xlim()[1] - ax.get_xlim()[0]) / 200
+    # 负贡献条
+    rects_neg, segs_neg = draw_bars(out_value, neg_features, "negative", width_separators, width_bar)
+    for p in rects_neg + segs_neg:
+        ax.add_patch(p)
+    # 正贡献条
+    rects_pos, segs_pos = draw_bars(out_value, pos_features, "positive", width_separators, width_bar)
+    for p in rects_pos + segs_pos:
+        ax.add_patch(p)
+    total_effect = np.abs(total_neg) + total_pos
+    # 负标签
+    fig, ax = draw_labels(fig, ax, out_value, neg_features, "negative", offset_text,
+                          total_effect, min_perc=min_perc, text_rotation=text_rotation)
+    # 正标签
+    fig, ax = draw_labels(fig, ax, out_value, pos_features, "positive", offset_text,
+                          total_effect, min_perc=min_perc, text_rotation=text_rotation)
+    # 图例、基准值、输出值
+    draw_higher_lower_element(out_value, offset_text)
+    draw_base_element(base_value, ax)
+    draw_output_element(data["outNames"][0], out_value, ax)
+    if data["link"] == "logit":
+        plt.xscale("logit")
+        ax.xaxis.set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        ax.ticklabel_format(style="plain")
+    if show:
+        plt.show()
+    else:
+        return plt.gcf()
 
 # ========== 预测与绘图 ==========
 if submitted:
@@ -414,26 +394,39 @@ if submitted:
     # 计算 SHAP 值
     shap_values = explainer.shap_values(input_scaled)[0]
 
-    st.subheader("🔍 影响风险的关键因素（SHAP 力图）")
-    st.markdown("下图展示了每个特征对当前患者 AKI 风险的贡献：**红色条表示推高风险**，**蓝色条表示降低风险**。")
+    # 构造 data 字典供 draw_additive_plot 使用
+    data = {
+        "outValue": float(explainer.expected_value + shap_values.sum()),  # 转换为 Python float
+        "baseValue": float(explainer.expected_value),
+        "features": {},
+        "featureNames": label_list,
+        "outNames": ["f(x)"],
+        "link": "identity"
+    }
+    # 填充特征数据（特征值已格式化为两位小数）
+    for i, (name, val, shap_val) in enumerate(zip(label_list, input_df.iloc[0].values, shap_values)):
+        data["features"][i] = {
+            "effect": float(shap_val),
+            "value": f"{val:.2f}"   # 保留两位小数
+        }
 
-    # 绘制力图（已调整 offset_factor=0.08 延长连接线，并移除输出值方框）
-    fig = draw_force_plot(
-        base_value=explainer.expected_value,
-        shap_values=shap_values,
-        features=input_df.iloc[0].values,
-        feature_names=label_list,
+    # 计算图形尺寸：根据特征数量自适应宽度
+    n_features = len(label_list)
+    figsize = (max(16, n_features * 1.8), 6)
+
+    # 绘制力图（text_rotation=30, min_perc=0.02）
+    fig = draw_additive_plot(
+        data=data,
+        figsize=figsize,
+        show=False,
         text_rotation=30,
-        min_perc=0.02,
-        offset_factor=0.08,       # 增大偏移，连接线更长
-        label_fontsize=9,
-        dpi=150,
+        min_perc=0.02
     )
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-    buf.seek(0)
-    st.image(buf, use_column_width=True)
+    # 在 Streamlit 中显示图形
+    st.subheader("🔍 影响风险的关键因素（SHAP 力图）")
+    st.markdown("下图展示了每个特征对当前患者 AKI 风险的贡献：**红色条表示推高风险**，**蓝色条表示降低风险**。")
+    st.pyplot(fig)
     plt.close(fig)
 
     st.caption("注：本预测结果基于回顾性研究模型，仅供参考，不能替代临床医生判断。")
