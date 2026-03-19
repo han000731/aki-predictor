@@ -7,27 +7,48 @@ import shap
 import matplotlib.pyplot as plt
 import numpy as np
 
+# 设置中文字体（防止 SHAP 力图中文乱码）
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial Unicode MS', 'DejaVu Sans']
+plt.rcParams['axes.unicode_minus'] = False
+
 # 页面设置
 st.set_page_config(page_title="神经重症AKI风险预测器", page_icon="🧠")
 st.title("🧠 神经重症急性肾损伤（AKI）风险预测计算器")
 st.markdown("基于 **10项核心临床特征** 与 **集成机器学习模型**，实时预测AKI发生概率，并展示影响风险的关键因素。")
 
+# 特征中文名称映射
+FEATURE_NAME_CN = {
+    'Age': '年龄 (岁)',
+    'APACHEII': 'APACHE II 评分',
+    'Shock_Index': '休克指数',
+    'Lactate_Max': '血乳酸峰值 (μmol/L)',
+    'Glucose_CV': '血糖变异系数',
+    'BUN_SCr_Ratio': '尿素/肌酐比值',
+    'Lab_UricAcid_Max': '血尿酸峰值 (μmol/L)',
+    'MechVent_Duration': '机械通气时长 (小时)',
+    'Mannitol_ICU_Dose_g': '甘露醇累积剂量 (g)',
+    'Vasopressor_Use': '血管活性药物使用'
+}
+
 # 加载模型和标准化器（使用缓存提高性能）
 @st.cache_resource
-def load_model():
-    model_ens = joblib.load('models/model_ens.pkl')          # 集成模型
-    scaler = joblib.load('models/scaler.pkl')                # 标准化器
-    features = joblib.load('models/feature_names.pkl')       # 特征顺序
+def load_models():
+    # 加载集成模型（用于概率预测）
+    model_ens = joblib.load('models/model_ens.pkl')
+    # 加载标准化器
+    scaler = joblib.load('models/scaler.pkl')
+    # 加载特征顺序
+    features = joblib.load('models/feature_names.pkl')
     # 从集成模型中提取 XGBoost 子模型（用于 SHAP 解释）
     xgb_model = model_ens.named_estimators_['xgb']
-    return xgb_model, scaler, features
+    return model_ens, scaler, features, xgb_model
 
 # 检查模型文件是否存在
 if not os.path.exists('models/model_ens.pkl'):
     st.error("❌ 模型文件未找到！请先运行 train_model.py 训练模型。")
     st.stop()
 
-xgb_model, scaler, feature_names = load_model()
+model_ens, scaler, feature_names, xgb_model = load_models()
 
 # 初始化 SHAP TreeExplainer
 explainer = shap.TreeExplainer(xgb_model)
@@ -75,14 +96,7 @@ if submitted:
     # 标准化（用于模型预测）
     input_scaled = scaler.transform(input_df)
 
-    # 预测概率（使用集成模型，保持与原代码一致）
-    # 这里需要重新加载集成模型来预测，因为 load_model 只返回了 xgb 子模型
-    # 为了不重复加载，我们可以在 load_model 中同时返回集成模型，或者在这里重新加载 ensemble
-    # 简单起见，重新加载集成模型（缓存会处理）
-    @st.cache_resource
-    def load_ensemble():
-        return joblib.load('models/model_ens.pkl')
-    model_ens = load_ensemble()
+    # 预测概率（使用集成模型）
     prob = model_ens.predict_proba(input_scaled)[0, 1]
     prob_percent = prob * 100
 
@@ -100,17 +114,19 @@ if submitted:
     # 计算 SHAP 值（基于 XGBoost 子模型）
     shap_values = explainer.shap_values(input_scaled)
 
-    # 生成 SHAP 力图（Force Plot）
+    # 生成 SHAP 力图（中文标签）
     st.subheader("🔍 影响风险的关键因素（SHAP 力图）")
-    st.markdown("下图展示了每个特征对当前患者 AKI 风险的贡献：红色条表示推高风险，蓝色条表示降低风险。")
+    st.markdown("下图展示了每个特征对当前患者 AKI 风险的贡献：**红色条表示推高风险**，**蓝色条表示降低风险**。")
 
-    # 使用 matplotlib 绘制力图
+    # 生成中文特征标签列表（确保顺序与 feature_names 一致）
+    cn_labels = [FEATURE_NAME_CN.get(name, name) for name in feature_names]
+
     plt.figure(figsize=(10, 3))
     shap.force_plot(
         base_value=explainer.expected_value,
         shap_values=shap_values[0],
-        features=input_df.iloc[0].values,          # 原始特征值（用于显示）
-        feature_names=feature_names,
+        features=input_df.iloc[0].values,  # 原始特征值（用于显示）
+        feature_names=cn_labels,            # 使用中文标签
         matplotlib=True,
         show=False
     )
