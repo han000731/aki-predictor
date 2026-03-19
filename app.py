@@ -6,7 +6,6 @@ import os
 import shap
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
-import matplotlib.ticker as ticker  # 保留以备将来使用
 import numpy as np
 import io
 
@@ -141,29 +140,30 @@ if submitted:
         contribution_threshold=0.02  # 只显示贡献度绝对值 ≥ 2% 的特征
     )
 
-    # 获取当前坐标轴
-    ax = plt.gca()
-
-    # 格式化 x 轴标签（特征值），保留两位小数
-    for label in ax.get_xticklabels():
-        try:
-            text = label.get_text()
-            if '=' in text:
-                name, value = text.split('=')
-                val_float = float(value)
-                label.set_text(f"{name}={val_float:.2f}")
-        except:
-            pass
-
-    # 强制设置图形尺寸（防止被覆盖）
+    # 强制设置图形尺寸
     fig = plt.gcf()
     fig.set_size_inches(18, 6)
 
-    # 调整 x 轴标签旋转
+    # 调整 x 轴标签旋转（如果有的话）
+    ax = plt.gca()
     plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
 
-    # 紧凑布局，底部留出空间
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    # ---------- 遍历所有文本对象，格式化特征值 ----------
+    for text in fig.findobj(match=lambda x: isinstance(x, plt.Text)):
+        content = text.get_text()
+        if '=' in content and not content.startswith('base value'):
+            parts = content.split('=')
+            if len(parts) == 2:
+                name = parts[0].strip()
+                try:
+                    value = float(parts[1])
+                    # 根据特征类型决定小数位数（这里统一保留2位）
+                    text.set_text(f"{name}={value:.2f}")
+                except:
+                    pass
+    # -------------------------------------------------
+
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # 底部留出空间
 
     # 将图形保存到内存缓冲区，然后用 st.image 显示
     buf = io.BytesIO()
