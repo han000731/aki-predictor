@@ -8,15 +8,14 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import numpy as np
 
-# 设置中文字体（优先查找 Linux 环境中常用的中文字体）
+# ========== 设置中文字体 ==========
 def set_chinese_font():
     chinese_fonts = [
         'WenQuanYi Zen Hei',       # Ubuntu 默认文泉驿正黑
         'Noto Sans CJK SC',         # Google Noto 简体中文
-        'Noto Sans CJK TC',         # 繁体中文备选
-        'SimHei',                   # Windows 黑体
-        'Microsoft YaHei',          # Windows 微软雅黑
-        'DejaVu Sans'               # 最终回退字体（可能不支持中文）
+        'SimHei',                    # Windows 黑体
+        'Microsoft YaHei',           # Windows 微软雅黑
+        'DejaVu Sans'                # 最终回退字体（可能不支持中文）
     ]
     for font in chinese_fonts:
         try:
@@ -27,19 +26,18 @@ def set_chinese_font():
         except:
             continue
     else:
-        # 如果没有找到任何中文字体，尝试使用 sans-serif 并打印警告
         plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
         st.warning("⚠️ 未找到合适的中文字体，SHAP 力图中的中文可能显示为方框，但不影响预测结果。")
     plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 
 set_chinese_font()
 
-# 页面设置
+# ========== 页面配置 ==========
 st.set_page_config(page_title="神经重症AKI风险预测器", page_icon="🧠")
 st.title("🧠 神经重症急性肾损伤（AKI）风险预测计算器")
 st.markdown("基于 **10项核心临床特征** 与 **集成机器学习模型**，实时预测AKI发生概率，并展示影响风险的关键因素。")
 
-# 特征中文名称映射
+# ========== 特征中文名称映射（词典） ==========
 FEATURE_NAME_CN = {
     'Age': '年龄 (岁)',
     'APACHEII': 'APACHE II 评分',
@@ -53,7 +51,7 @@ FEATURE_NAME_CN = {
     'Vasopressor_Use': '血管活性药物使用'
 }
 
-# 加载模型和标准化器（使用缓存提高性能）
+# ========== 加载模型 ==========
 @st.cache_resource
 def load_models():
     model_ens = joblib.load('models/model_ens.pkl')      # 集成模型（用于概率预测）
@@ -62,17 +60,14 @@ def load_models():
     xgb_model = model_ens.named_estimators_['xgb']       # XGBoost 子模型（用于 SHAP）
     return model_ens, scaler, features, xgb_model
 
-# 检查模型文件是否存在
 if not os.path.exists('models/model_ens.pkl'):
     st.error("❌ 模型文件未找到！请先运行 train_model.py 训练模型。")
     st.stop()
 
 model_ens, scaler, feature_names, xgb_model = load_models()
-
-# 初始化 SHAP TreeExplainer
 explainer = shap.TreeExplainer(xgb_model)
 
-# 创建输入表单
+# ========== 输入表单 ==========
 with st.form("prediction_form"):
     st.subheader("📋 请输入患者临床指标")
 
@@ -94,9 +89,8 @@ with st.form("prediction_form"):
 
     submitted = st.form_submit_button("🔮 预测AKI风险")
 
-# 处理预测
+# ========== 预测与 SHAP 力图 ==========
 if submitted:
-    # 转换输入为数值
     vasopressor_val = 1 if vasopressor == "是" else 0
     input_dict = {
         'BUN_SCr_Ratio': bun_scr_ratio,
@@ -110,19 +104,15 @@ if submitted:
         'APACHEII': apacheii,
         'Age': age
     }
-    input_df = pd.DataFrame([input_dict])[feature_names]  # 按模型要求的顺序排列
+    input_df = pd.DataFrame([input_dict])[feature_names]  # 按模型要求顺序排列
 
-    # 标准化（用于模型预测）
+    # 标准化与预测
     input_scaled = scaler.transform(input_df)
-
-    # 预测概率（使用集成模型）
     prob = model_ens.predict_proba(input_scaled)[0, 1]
     prob_percent = prob * 100
 
-    # 显示预测结果
     st.subheader("📊 预测结果")
     st.metric("AKI发生概率", f"{prob_percent:.1f}%")
-
     if prob < 0.2:
         st.success("低风险 (概率 < 20%)")
     elif prob < 0.4:
@@ -130,18 +120,15 @@ if submitted:
     else:
         st.error("高风险 (概率 ≥ 40%)")
 
-    # 计算 SHAP 值（基于 XGBoost 子模型）
-    shap_values = explainer.shap_values(input_scaled)
-
-    # 生成 SHAP 力图（中文标签）
+    # SHAP 力图
     st.subheader("🔍 影响风险的关键因素（SHAP 力图）")
     st.markdown("下图展示了每个特征对当前患者 AKI 风险的贡献：**红色条表示推高风险**，**蓝色条表示降低风险**。")
 
-    # 生成中文特征标签列表
+    shap_values = explainer.shap_values(input_scaled)
     cn_labels = [FEATURE_NAME_CN.get(name, name) for name in feature_names]
 
-    # 设置更大的图形尺寸和高分辨率
-    plt.figure(figsize=(14, 4), dpi=150)
+    # 设置大尺寸、高分辨率图形
+    plt.figure(figsize=(16, 5), dpi=150)
     shap.force_plot(
         base_value=explainer.expected_value,
         shap_values=shap_values[0],
@@ -153,7 +140,6 @@ if submitted:
 
     # 调整 x 轴标签旋转，避免拥挤
     ax = plt.gca()
-    # 获取当前 x 轴标签并设置旋转
     for label in ax.get_xticklabels():
         label.set_rotation(30)
         label.set_ha('right')
@@ -162,5 +148,4 @@ if submitted:
     st.pyplot(plt.gcf())
     plt.close()
 
-    # 附加说明
     st.caption("注：本预测结果基于回顾性研究模型，仅供参考，不能替代临床医生判断。")
