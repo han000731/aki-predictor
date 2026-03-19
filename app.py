@@ -138,8 +138,7 @@ if submitted:
         matplotlib=True,
         show=False
     )
-    # ---------- 在这里插入数值格式化代码 ----------
-ax = plt.gca()
+ ax = plt.gca()
 labels = ax.get_xticklabels()
 for label in labels:
     try:
@@ -150,7 +149,6 @@ for label in labels:
             label.set_text(f"{name}={val_float:.2f}")
     except:
         pass
-# --------------------------------------------
     # 强制设置图形尺寸
     fig = plt.gcf()
     fig.set_size_inches(18, 6)
