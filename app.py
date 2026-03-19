@@ -59,7 +59,7 @@ def check_chinese_font():
                 return True
         except:
             continue
-    plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+    plt.rcParams['font.sans-serif'] = ['Arial']  # 英文清晰显示
     return False
 
 chinese_available = check_chinese_font()
@@ -128,8 +128,11 @@ if submitted:
 
     shap_values = explainer.shap_values(input_scaled)
 
-    # 创建大尺寸、高分辨率图形，并设置 contribution_threshold 过滤小贡献特征
-    plt.figure(figsize=(18, 6), dpi=150)
+    # ========== 核心优化绘图 ==========
+    # 根据特征数量自适应宽度（防止底部标签重叠）
+    feature_count = len(label_list)
+    plt.figure(figsize=(max(16, feature_count * 1.8), 6), dpi=150)
+
     shap.force_plot(
         base_value=explainer.expected_value,
         shap_values=shap_values[0],
@@ -137,41 +140,20 @@ if submitted:
         feature_names=label_list,
         matplotlib=True,
         show=False,
-        contribution_threshold=0.02  # 只显示贡献度绝对值 ≥ 2% 的特征
+        contribution_threshold=0.02,  # 只显示贡献度绝对值 ≥ 2% 的特征
+        fontsize=9                     # 缩小标签字体，避免拥挤
     )
 
-    # 强制设置图形尺寸
-    fig = plt.gcf()
-    fig.set_size_inches(18, 6)
+    # 强制自适应布局
+    plt.tight_layout()
 
-    # 调整 x 轴标签旋转（如果有的话）
-    ax = plt.gca()
-    plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
-
-    # ---------- 遍历所有文本对象，格式化特征值 ----------
-    for text in fig.findobj(match=lambda x: isinstance(x, plt.Text)):
-        content = text.get_text()
-        if '=' in content and not content.startswith('base value'):
-            parts = content.split('=')
-            if len(parts) == 2:
-                name = parts[0].strip()
-                try:
-                    value = float(parts[1])
-                    # 根据特征类型决定小数位数（这里统一保留2位）
-                    text.set_text(f"{name}={value:.2f}")
-                except:
-                    pass
-    # -------------------------------------------------
-
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # 底部留出空间
-
-    # 将图形保存到内存缓冲区，然后用 st.image 显示
+    # 将图形保存到内存缓冲区（高清、无遮挡）
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
     buf.seek(0)
     st.image(buf, use_column_width=True)
 
-    plt.close(fig)
+    plt.close()
 
     st.caption("注：本预测结果基于回顾性研究模型，仅供参考，不能替代临床医生判断。")
     if not chinese_available:
