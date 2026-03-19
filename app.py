@@ -47,7 +47,7 @@ if not os.path.exists('models/model_ens.pkl'):
 model_ens, scaler, feature_names, xgb_model = load_models()
 explainer = shap.TreeExplainer(xgb_model)
 
-# ========== 字体检测 ==========
+# ========== 字体检测（不显示警告） ==========
 def check_chinese_font():
     chinese_fonts = [
         'WenQuanYi Zen Hei',
@@ -66,11 +66,10 @@ def check_chinese_font():
     return False
 
 chinese_available = check_chinese_font()
-if not chinese_available:
-    st.warning("⚠️ 当前环境缺少中文字体，SHAP 力图将使用英文标签显示，不影响预测结果。")
-    label_list = feature_names
-else:
+if chinese_available:
     label_list = [FEATURE_NAME_CN.get(name, name) for name in feature_names]
+else:
+    label_list = feature_names  # 无中文字体时使用英文
 
 # ========== 输入表单 ==========
 with st.form("prediction_form"):
@@ -90,52 +89,10 @@ with st.form("prediction_form"):
         vasopressor = st.selectbox("血管活性药物使用", options=["否", "是"], index=0)
     submitted = st.form_submit_button("🔮 预测AKI风险")
 
-# ========== 以下是您提供的 SHAP 绘图函数 ==========
-# （为节省篇幅，这里只列出修改过的关键函数，其余与您提供的完全相同）
-# 注意：draw_output_element 已去除白色背景框
-
-def draw_output_element(out_name, out_value, ax):
-    x, y = np.array([[out_value, out_value], [0, 0.24]])
-    line = lines.Line2D(x, y, lw=2.0, color="#F2F2F2")
-    line.set_clip_on(False)
-    ax.add_line(line)
-    # 输出数值，无背景框
-    plt.text(out_value, 0.25, f"{out_value:.2f}", fontsize=12, weight="bold", ha="center")
-    plt.text(out_value, 0.33, out_name, fontsize=10, alpha=0.5, ha="center")
-
-def draw_base_element(base_value, ax):
-    x, y = np.array([[base_value, base_value], [0.13, 0.25]])
-    line = lines.Line2D(x, y, lw=2.0, color="#F2F2F2")
-    line.set_clip_on(False)
-    ax.add_line(line)
-    plt.text(base_value, 0.33, "base value", fontsize=10, alpha=0.5, ha="center")
-
-def draw_higher_lower_element(out_value, offset_text):
-    plt.text(out_value - offset_text, 0.405, "higher", fontsize=11, color="#FF0D57", ha="right")
-    plt.text(out_value + offset_text, 0.405, "lower", fontsize=11, color="#1E88E5", ha="left")
-    plt.text(out_value, 0.4, r"$\leftarrow$", fontsize=11, color="#1E88E5", ha="center")
-    plt.text(out_value, 0.425, r"$\rightarrow$", fontsize=11, color="#FF0D57", ha="center")
-
-def update_axis_limits(ax, total_pos, pos_features, total_neg, neg_features, base_value, out_value):
-    ax.set_ylim(-0.5, 0.15)
-    padding = np.max([np.abs(total_pos) * 0.2, np.abs(total_neg) * 0.2])
-    if len(pos_features) > 0:
-        min_x = min(np.min(pos_features[:, 0].astype(float)), base_value) - padding
-    else:
-        min_x = out_value - padding
-    if len(neg_features) > 0:
-        max_x = max(np.max(neg_features[:, 0].astype(float)), base_value) + padding
-    else:
-        max_x = out_value + padding
-    ax.set_xlim(min_x, max_x)
-    plt.tick_params(top=True, bottom=False, left=False, right=False, labelleft=False, labeltop=True, labelbottom=False)
-    plt.locator_params(axis="x", nbins=12)
-    for key, spine in zip(plt.gca().spines.keys(), plt.gca().spines.values()):
-        if key != "top":
-            spine.set_visible(False)
+# ========== SHAP 绘图函数（基于您提供的代码） ==========
 
 def draw_bars(out_value, features, feature_type, width_separators, width_bar):
-    # 与您提供的代码完全相同，此处省略以节省篇幅
+    """绘制条形和分隔线。"""
     rectangle_list = []
     separator_list = []
     pre_val = out_value
@@ -233,7 +190,6 @@ def draw_labels(fig, ax, out_value, features, feature_type, offset_text, total_e
             va=va_alignment,
             rotation=text_rotation,
         )
-        # 获取文本尺寸
         fig.canvas.draw()
         box_size = text_out_val.get_window_extent(renderer=fig.canvas.get_renderer()).transformed(ax.transData.inverted())
         if feature_type == "positive":
@@ -255,7 +211,6 @@ def draw_labels(fig, ax, out_value, features, feature_type, offset_text, total_e
             ax.add_line(line)
             start_text = box_end
         pre_val = val
-    # 添加底纹
     extent_shading = [out_value, box_end, 0, -0.31]
     path = [[out_value, 0], [pre_val, 0], [box_end, -0.08], [box_end, -0.2], [out_value, -0.2], [out_value, 0]]
     path = Path(path)
@@ -283,7 +238,7 @@ def draw_labels(fig, ax, out_value, features, feature_type, offset_text, total_e
     return fig, ax
 
 def format_data(data):
-    # 与您提供的代码完全相同
+    """格式化数据。"""
     neg_features = np.array(
         [
             [data["features"][x]["effect"], data["features"][x]["value"], data["featureNames"][x]]
@@ -322,34 +277,69 @@ def format_data(data):
     data["baseValue"] = convert_func(data["baseValue"])
     return neg_features, total_neg, pos_features, total_pos
 
+def draw_output_element(out_name, out_value, ax):
+    """绘制输出值（已移除白色背景框）。"""
+    x, y = np.array([[out_value, out_value], [0, 0.24]])
+    line = lines.Line2D(x, y, lw=2.0, color="#F2F2F2")
+    line.set_clip_on(False)
+    ax.add_line(line)
+    plt.text(out_value, 0.25, f"{out_value:.2f}", fontsize=12, weight="bold", ha="center")
+    plt.text(out_value, 0.33, out_name, fontsize=10, alpha=0.5, ha="center")
+
+def draw_base_element(base_value, ax):
+    x, y = np.array([[base_value, base_value], [0.13, 0.25]])
+    line = lines.Line2D(x, y, lw=2.0, color="#F2F2F2")
+    line.set_clip_on(False)
+    ax.add_line(line)
+    plt.text(base_value, 0.33, "base value", fontsize=10, alpha=0.5, ha="center")
+
+def draw_higher_lower_element(out_value, offset_text):
+    plt.text(out_value - offset_text, 0.405, "higher", fontsize=11, color="#FF0D57", ha="right")
+    plt.text(out_value + offset_text, 0.405, "lower", fontsize=11, color="#1E88E5", ha="left")
+    plt.text(out_value, 0.4, r"$\leftarrow$", fontsize=11, color="#1E88E5", ha="center")
+    plt.text(out_value, 0.425, r"$\rightarrow$", fontsize=11, color="#FF0D57", ha="center")
+
+def update_axis_limits(ax, total_pos, pos_features, total_neg, neg_features, base_value, out_value):
+    ax.set_ylim(-0.5, 0.15)
+    padding = np.max([np.abs(total_pos) * 0.2, np.abs(total_neg) * 0.2])
+    if len(pos_features) > 0:
+        min_x = min(np.min(pos_features[:, 0].astype(float)), base_value) - padding
+    else:
+        min_x = out_value - padding
+    if len(neg_features) > 0:
+        max_x = max(np.max(neg_features[:, 0].astype(float)), base_value) + padding
+    else:
+        max_x = out_value + padding
+    ax.set_xlim(min_x, max_x)
+    plt.tick_params(top=True, bottom=False, left=False, right=False, labelleft=False, labeltop=True, labelbottom=False)
+    plt.locator_params(axis="x", nbins=12)
+    for key, spine in zip(plt.gca().spines.keys(), plt.gca().spines.values()):
+        if key != "top":
+            spine.set_visible(False)
+
 def draw_additive_plot(data, figsize, show, text_rotation=0, min_perc=0.05):
-    """整合后的绘图主函数，已修改 offset_text 系数为 0.08 以延长连接线"""
+    """主绘图函数（offset_text 系数调整为 0.08 以延长连接线）。"""
     if show is False:
         plt.ioff()
     neg_features, total_neg, pos_features, total_pos = format_data(data)
     base_value = data["baseValue"]
     out_value = data["outValue"]
-    offset_text = (np.abs(total_neg) + np.abs(total_pos)) * 0.08  # 原为0.04，增大为0.08
+    offset_text = (np.abs(total_neg) + np.abs(total_pos)) * 0.08  # 原为0.04，增大以延长连接线
     fig, ax = plt.subplots(figsize=figsize)
     update_axis_limits(ax, total_pos, pos_features, total_neg, neg_features, base_value, out_value)
     width_bar = 0.1
     width_separators = (ax.get_xlim()[1] - ax.get_xlim()[0]) / 200
-    # 负贡献条
     rects_neg, segs_neg = draw_bars(out_value, neg_features, "negative", width_separators, width_bar)
     for p in rects_neg + segs_neg:
         ax.add_patch(p)
-    # 正贡献条
     rects_pos, segs_pos = draw_bars(out_value, pos_features, "positive", width_separators, width_bar)
     for p in rects_pos + segs_pos:
         ax.add_patch(p)
     total_effect = np.abs(total_neg) + total_pos
-    # 负标签
     fig, ax = draw_labels(fig, ax, out_value, neg_features, "negative", offset_text,
                           total_effect, min_perc=min_perc, text_rotation=text_rotation)
-    # 正标签
     fig, ax = draw_labels(fig, ax, out_value, pos_features, "positive", offset_text,
                           total_effect, min_perc=min_perc, text_rotation=text_rotation)
-    # 图例、基准值、输出值
     draw_higher_lower_element(out_value, offset_text)
     draw_base_element(base_value, ax)
     draw_output_element(data["outNames"][0], out_value, ax)
@@ -394,27 +384,26 @@ if submitted:
     # 计算 SHAP 值
     shap_values = explainer.shap_values(input_scaled)[0]
 
-    # 构造 data 字典供 draw_additive_plot 使用
+    # 构造 data 字典
     data = {
-        "outValue": float(explainer.expected_value + shap_values.sum()),  # 转换为 Python float
+        "outValue": float(explainer.expected_value + shap_values.sum()),
         "baseValue": float(explainer.expected_value),
         "features": {},
         "featureNames": label_list,
         "outNames": ["f(x)"],
         "link": "identity"
     }
-    # 填充特征数据（特征值已格式化为两位小数）
     for i, (name, val, shap_val) in enumerate(zip(label_list, input_df.iloc[0].values, shap_values)):
         data["features"][i] = {
             "effect": float(shap_val),
-            "value": f"{val:.2f}"   # 保留两位小数
+            "value": f"{val:.2f}"   # 特征值保留两位小数
         }
 
-    # 计算图形尺寸：根据特征数量自适应宽度
+    # 根据特征数量自适应图形宽度
     n_features = len(label_list)
     figsize = (max(16, n_features * 1.8), 6)
 
-    # 绘制力图（text_rotation=30, min_perc=0.02）
+    # 绘制力图
     fig = draw_additive_plot(
         data=data,
         figsize=figsize,
@@ -423,12 +412,9 @@ if submitted:
         min_perc=0.02
     )
 
-    # 在 Streamlit 中显示图形
     st.subheader("🔍 影响风险的关键因素（SHAP 力图）")
     st.markdown("下图展示了每个特征对当前患者 AKI 风险的贡献：**红色条表示推高风险**，**蓝色条表示降低风险**。")
     st.pyplot(fig)
     plt.close(fig)
 
     st.caption("注：本预测结果基于回顾性研究模型，仅供参考，不能替代临床医生判断。")
-    if not chinese_available:
-        st.caption("（当前使用英文标签，因云端环境缺少中文字体。如需中文，可考虑部署至支持中文的环境。）")
