@@ -1,86 +1,129 @@
-# app.py
 import streamlit as st
 import pandas as pd
+import numpy as np
 import joblib
-import os
+import shap
+import matplotlib.pyplot as plt
 
-# 页面设置
-st.set_page_config(page_title="神经重症AKI风险预测器", page_icon="🧠")
-st.title("🧠 神经重症急性肾损伤（AKI）风险预测计算器")
-st.markdown("基于 **10项核心临床特征** 与 **集成机器学习模型**，实时预测AKI发生概率。")
+# ==========================================
+# 1. 页面基础配置
+# ==========================================
+st.set_page_config(page_title="神经重症 AKI 风险预测器", page_icon="🏥", layout="wide")
+st.title("🏥 神经重症患者 AKI 风险实时预测系统")
+st.markdown("---")
 
-# 加载模型和标准化器（使用缓存提高性能）
+# ==========================================
+# 2. 加载模型与预处理工具 (开启缓存加速)
+# ==========================================
 @st.cache_resource
-def load_model():
-    model = joblib.load('models/model_ens.pkl')
-    scaler = joblib.load('models/scaler.pkl')
-    features = joblib.load('models/feature_names.pkl')
-    return model, scaler, features
+def load_models():
+    # 注意：这里直接读取根目录的文件，没有 models/ 前缀
+    model_ens = joblib.load('model_ens.pkl')
+    scaler = joblib.load('scaler.pkl')
+    feature_names = joblib.load('feature_names.pkl')
+    return model_ens, scaler, feature_names
 
-# 检查模型是否存在
-if not os.path.exists('models/model_ens.pkl'):
-    st.error("❌ 模型文件未找到！请先运行 train_model.py 训练模型。")
+try:
+    model, scaler, feature_names = load_models()
+except FileNotFoundError as e:
+    st.error(f"⚠️ 文件加载失败，请确保 GitHub 仓库根目录下存在对应的 pkl 文件。\n报错信息: {e}")
     st.stop()
 
-model, scaler, feature_names = load_model()
+# ==========================================
+# 3. 初始化 SHAP 解释器 (开启缓存加速)
+# ==========================================
+@st.cache_resource
+def create_shap_explainer(_model):
+    # 构建 SHAP 解释器
+    return shap.Explainer(_model)
 
-# 创建输入表单
-with st.form("prediction_form"):
-    st.subheader("📋 请输入患者临床指标")
+explainer = create_shap_explainer(model)
 
-    col1, col2 = st.columns(2)
+# ==========================================
+# 4. 侧边栏：动态生成患者数据输入面板
+# ==========================================
+st.sidebar.header("📋 输入患者生理指标")
+st.sidebar.info("请在下方输入患者的各项数据，系统将实时计算 AKI 风险。")
 
-    with col1:
-        age = st.number_input("年龄 (岁)", min_value=18, max_value=100, value=68, step=1)
-        apacheii = st.number_input("APACHE II 评分", min_value=0, max_value=50, value=19, step=1)
-        shock_index = st.number_input("休克指数", min_value=0.2, max_value=2.0, value=0.7, step=0.05, format="%.2f")
-        lactate_max = st.number_input("血乳酸峰值 (μmol/L)", min_value=50, max_value=3000, value=280, step=10)
-        glucose_cv = st.number_input("血糖变异系数 (CV)", min_value=0.0, max_value=1.0, value=0.2, step=0.01, format="%.2f")
+patient_data = {}
+# 根据你的 feature_names.pkl 自动生成对应数量的输入框
+for feature in feature_names:
+    # 默认值设为 0.0，你可以后续根据具体的生理指标（如年龄、肌酐等）在此处硬编码修改默认值
+    patient_data[feature] = st.sidebar.number_input(f"请输入 {feature}", value=0.0, step=0.1)
 
-    with col2:
-        bun_scr_ratio = st.number_input("尿素/肌酐比值", min_value=0.01, max_value=0.5, value=0.10, step=0.01, format="%.2f")
-        uric_acid_max = st.number_input("血尿酸峰值 (μmol/L)", min_value=50, max_value=1000, value=320, step=10)
-        mechvent_duration = st.number_input("机械通气时长 (小时)", min_value=0, max_value=720, value=48, step=6)
-        mannitol_dose = st.number_input("甘露醇累积剂量 (g)", min_value=0, max_value=500, value=0, step=5)
-        vasopressor = st.selectbox("血管活性药物使用", options=["否", "是"], index=0)
+# ==========================================
+# 5. 核心预测与可视化逻辑
+# ==========================================
+if st.button("🚀 开始预测计算", type="primary"):
+    
+    # 将用户输入转化为 DataFrame，并强制约束列的顺序与训练时一致
+    patient_df = pd.DataFrame([patient_data])[feature_names]
+    
+    # 执行数据标准化 (极为关键的一步)
+    patient_df_scaled = scaler.transform(patient_df)
+    
+    # 计算风险概率 (提取并发 AKI [类别1] 的概率)
+    try:
+        prob = model.predict_proba(patient_df_scaled)[0][1]
+    except AttributeError:
+        # 兼容部分不支持 predict_proba 的模型
+        prob = model.predict(patient_df_scaled)[0]
 
-    submitted = st.form_submit_button("🔮 预测AKI风险")
-
-# 处理预测
-if submitted:
-    # 转换输入为数值
-    vasopressor_val = 1 if vasopressor == "是" else 0
-    input_dict = {
-        'BUN_SCr_Ratio': bun_scr_ratio,
-        'Mannitol_ICU_Dose_g': mannitol_dose,
-        'MechVent_Duration': mechvent_duration,
-        'Lactate_Max': lactate_max,
-        'Vasopressor_Use': vasopressor_val,
-        'Glucose_CV': glucose_cv,
-        'Lab_UricAcid_Max': uric_acid_max,
-        'Shock_Index': shock_index,
-        'APACHEII': apacheii,
-        'Age': age
-    }
-    input_df = pd.DataFrame([input_dict])[feature_names]  # 按模型要求的顺序排列
-
-    # 标准化
-    input_scaled = scaler.transform(input_df)
-
-    # 预测概率
-    prob = model.predict_proba(input_scaled)[0, 1]
-    prob_percent = prob * 100
-
-    # 显示结果
+    # --- 界面展示：预测结果 ---
     st.subheader("📊 预测结果")
-    st.metric("AKI发生概率", f"{prob_percent:.1f}%")
-
-    if prob < 0.2:
-        st.success("低风险 (概率 < 20%)")
-    elif prob < 0.4:
-        st.info("中风险 (20% ~ 40%)")
+    
+    # 动态颜色提示
+    if prob >= 0.5:
+        st.error(f"**高风险预警**：该患者并发 AKI 的概率为 **{prob:.2%}**")
+    elif prob >= 0.2:
+        st.warning(f"**中等风险**：该患者并发 AKI 的概率为 **{prob:.2%}**")
     else:
-        st.error("高风险 (概率 ≥ 40%)")
+        st.success(f"**低风险**：该患者并发 AKI 的概率为 **{prob:.2%}**")
+        
+    st.progress(float(prob))
+    
+    # --- 界面展示：SHAP 归因分析 ---
+    st.markdown("---")
+    st.subheader("🔍 特定患者风险驱动因素分析 (SHAP Force Plot)")
+    st.markdown("""
+    **图表解读指南：**
+    * **基准值 (Base Value)**: 模型在所有患者上的平均预测概率。
+    * <span style='color: #ff0051; font-weight:bold;'>红色条形 (推高风险)</span>: 此类生理指标正在**推高**当前患者的 AKI 风险。
+    * <span style='color: #008bfb; font-weight:bold;'>蓝色条形 (降低风险)</span>: 此类生理指标正在**降低**当前患者的 AKI 风险。
+    * 箭头越宽，代表该指标对最终结果的影响力越大。
+    """, unsafe_allow_html=True)
 
-    # 附加说明
-    st.caption("注：本预测结果基于回顾性研究模型，仅供参考，不能替代临床医生判断。")
+    with st.spinner('正在进行特征归因运算，请稍候...'):
+        # 计算当前患者的 SHAP 值 (必须传入标准化后的数据)
+        shap_values = explainer(patient_df_scaled)
+        
+        # 兼容性处理：随机森林输出的是三维数组，XGBoost 输出的是二维数组
+        if isinstance(explainer.expected_value, (list, np.ndarray)) and len(explainer.expected_value) > 1:
+            base_value = explainer.expected_value[1]
+            if len(shap_values.values.shape) == 3:
+                shap_vals_patient = shap_values.values[0, :, 1]
+            else:
+                shap_vals_patient = shap_values.values[0]
+        else:
+            base_value = explainer.expected_value
+            shap_vals_patient = shap_values.values[0]
+            
+        # 绘制 SHAP 力图 (传入患者的原始数据以供图表展示具体数值)
+        plt.figure(figsize=(10, 3))
+        shap.force_plot(
+            base_value, 
+            shap_vals_patient, 
+            patient_df.iloc[0], 
+            matplotlib=True, 
+            show=False,
+            feature_names=feature_names,
+            figsize=(12, 3),
+            text_rotation=15 # 防止特征名称重叠
+        )
+        
+        # 将生成的图表渲染至 Streamlit 页面
+        st.pyplot(plt.gcf(), bbox_inches='tight')
+        plt.clf() # 清空内存，防止下次预测时图表重叠
+
+st.markdown("---")
+st.caption("⚠️ **免责声明**：本计算器基于机器学习算法构建，仅供神经重症临床研究与决策辅助参考，不能替代具有专业执照医师的临床诊断与治疗建议。")
